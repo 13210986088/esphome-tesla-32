@@ -7,7 +7,7 @@
 namespace esphome {
 namespace tesla_ble_vehicle {
 
-static const char *TAG = "tesla_ble_vehicle.sensor";
+static const char *const TAG = "tesla_ble_vehicle.sensor";
 
 void TeslaBLEVehicleSensor::setup() {
   ESP_LOGCONFIG(TAG, "Tesla BLE Vehicle Sensor component setup.");
@@ -16,7 +16,7 @@ void TeslaBLEVehicleSensor::setup() {
 void TeslaBLEVehicleSensor::update() {
   ESP_LOGD(TAG, "Updating vehicle data...");
 
-  auto *vehicle = App.get_component<TeslaBLEVehicle>();
+  auto *vehicle = static_cast<TeslaBLEVehicle*>(App.get_component("tesla_ble_vehicle"));
   if (vehicle == nullptr) {
     ESP_LOGW(TAG, "TeslaBLEVehicle component not found.");
     return;
