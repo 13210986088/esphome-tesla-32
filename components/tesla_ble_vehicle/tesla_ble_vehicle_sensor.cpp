@@ -1,4 +1,4 @@
-#include "tesla_ble_vehicle_sensor.h"
+和#include "tesla_ble_vehicle_sensor.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 #include "esphome/components/tesla_ble_vehicle/tesla_ble_vehicle.h"
@@ -7,7 +7,7 @@
 namespace esphome {
 namespace tesla_ble_vehicle {
 
-static const char *const TAG = "tesla_ble_vehicle.sensor";
+static const char *const SENSOR_TAG = "tesla_ble_vehicle.sensor";
 
 void TeslaBLEVehicleSensor::setup() {
   ESP_LOGCONFIG(TAG, "Tesla BLE Vehicle Sensor component setup.");
