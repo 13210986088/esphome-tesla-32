@@ -1,4 +1,4 @@
-和#include "tesla_ble_vehicle_sensor.h"
+#include "tesla_ble_vehicle_sensor.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 #include "esphome/components/tesla_ble_vehicle/tesla_ble_vehicle.h"
