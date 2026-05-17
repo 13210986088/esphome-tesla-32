@@ -9,7 +9,7 @@ from esphome.const import (
     CONF_FORCE_UPDATE,
     CONF_ICON,
     CONF_ID,
-    CONF_INTERNAL,           # 新增
+    CONF_INTERNAL,
     CONF_MODE,
     CONF_NAME,
     CONF_RESTORE_MODE,
@@ -86,7 +86,7 @@ TESLA_ROLES = {
 }
 
 # =============================================================================
-# ENTITY DEFINITIONS (所有自动实体均标记为 internal: True，使其不在前端显示)
+# ENTITY DEFINITIONS (所有自动实体均标记为 internal: True)
 # =============================================================================
 
 BINARY_SENSORS = [
@@ -167,7 +167,7 @@ NUMBERS = [
 ]
 
 # =============================================================================
-# CONFIG SCHEMA (扩展用户自定义传感器选项，保持不变)
+# CONFIG SCHEMA (扩展用户自定义传感器选项)
 # =============================================================================
 
 CONFIG_SCHEMA = (
@@ -182,8 +182,9 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_INFOTAINMENT_POLL_INTERVAL_ACTIVE, default=10): cv.int_range(min=5, max=120),
             cv.Optional(CONF_INFOTAINMENT_SLEEP_TIMEOUT, default=660): cv.int_range(min=60, max=3600),
 
-            # ★ 用户自定义数值传感器 (可选)
+            # ★ 用户自定义数值传感器 (可选) — 已扩展
             cv.Optional("battery_level"): sensor.sensor_schema(unit_of_measurement="%", accuracy_decimals=0),
+            cv.Optional("range"): sensor.sensor_schema(unit_of_measurement="mi", device_class="distance", accuracy_decimals=0),          # 新增
             cv.Optional("range_rated_api"): sensor.sensor_schema(unit_of_measurement="km", accuracy_decimals=1),
             cv.Optional("inside_temp"): sensor.sensor_schema(unit_of_measurement="°C", device_class="temperature", accuracy_decimals=1),
             cv.Optional("outside_temp"): sensor.sensor_schema(unit_of_measurement="°C", device_class="temperature", accuracy_decimals=1),
@@ -194,7 +195,14 @@ CONFIG_SCHEMA = (
             cv.Optional("charge_energy_added"): sensor.sensor_schema(unit_of_measurement="kWh", device_class="energy", accuracy_decimals=2),
             cv.Optional("charge_rate"): sensor.sensor_schema(unit_of_measurement="km/h", accuracy_decimals=1),
             cv.Optional("charger_power"): sensor.sensor_schema(unit_of_measurement="kW", device_class="power", accuracy_decimals=0),
+            cv.Optional("charger_voltage"): sensor.sensor_schema(unit_of_measurement="V", device_class="voltage", accuracy_decimals=0),  # 新增
+            cv.Optional("charger_current"): sensor.sensor_schema(unit_of_measurement="A", device_class="current", accuracy_decimals=1),  # 新增
+            cv.Optional("charging_rate"): sensor.sensor_schema(unit_of_measurement="mph", device_class="speed", accuracy_decimals=1),    # 新增
             cv.Optional("time_to_full_charge"): sensor.sensor_schema(unit_of_measurement="min", device_class="duration", accuracy_decimals=0),
+            cv.Optional("tpms_front_left"): sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),   # 新增
+            cv.Optional("tpms_front_right"): sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),  # 新增
+            cv.Optional("tpms_rear_left"): sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),    # 新增
+            cv.Optional("tpms_rear_right"): sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),   # 新增
 
             # ★ 用户自定义二进制传感器 (可选)
             cv.Optional("locked"): binary_sensor.binary_sensor_schema(device_class="lock"),
@@ -214,7 +222,7 @@ CONFIG_SCHEMA = (
 )
 
 # =============================================================================
-# HELPER FUNCTIONS (增加了对 "internal" 属性的应用)
+# HELPER FUNCTIONS
 # =============================================================================
 
 def get_device_class_const(component_module, device_class_str):
@@ -406,9 +414,12 @@ async def to_code(config):
     user_binary_keys = set()
     user_text_keys = set()
 
-    for skey in ["battery_level", "range_rated_api", "inside_temp", "outside_temp",
+    # 扩展 user_sensor_keys，包含新增的传感器
+    for skey in ["battery_level", "range", "range_rated_api", "inside_temp", "outside_temp",
                  "driver_temp_setting", "passenger_temp_setting", "odometer", "speed",
-                 "charge_energy_added", "charge_rate", "charger_power", "time_to_full_charge"]:
+                 "charge_energy_added", "charge_rate", "charger_power", "charger_voltage",
+                 "charger_current", "charging_rate", "time_to_full_charge",
+                 "tpms_front_left", "tpms_front_right", "tpms_rear_left", "tpms_rear_right"]:
         if skey in config:
             user_sensor_keys.add(skey)
 
@@ -426,15 +437,33 @@ async def to_code(config):
     if "asleep" in user_binary_keys:
         skip_binary_ids.add("asleep")
 
+    # 扩展 skip_sensor_ids，包含所有用户可能显式定义的传感器 ID
     skip_sensor_ids = set()
-    if "battery_level" in user_sensor_keys:
-        skip_sensor_ids.add("battery_level")
-    if "outside_temp" in user_sensor_keys:
-        skip_sensor_ids.add("outside_temp")
-    if "odometer" in user_sensor_keys:
-        skip_sensor_ids.add("odometer")
-    if "charger_power" in user_sensor_keys:
-        skip_sensor_ids.add("charger_power")
+    id_map = {
+        "battery_level": "battery_level",
+        "range": "range",
+        "range_rated_api": "range_rated_api",
+        "inside_temp": "inside_temp",
+        "outside_temp": "outside_temp",
+        "driver_temp_setting": "driver_temp_setting",
+        "passenger_temp_setting": "passenger_temp_setting",
+        "odometer": "odometer",
+        "speed": "speed",
+        "charge_energy_added": "charge_energy_added",
+        "charge_rate": "charge_rate",
+        "charger_power": "charger_power",
+        "charger_voltage": "charger_voltage",
+        "charger_current": "charger_current",
+        "charging_rate": "charging_rate",
+        "time_to_full_charge": "time_to_full_charge",
+        "tpms_front_left": "tpms_front_left",
+        "tpms_front_right": "tpms_front_right",
+        "tpms_rear_left": "tpms_rear_left",
+        "tpms_rear_right": "tpms_rear_right",
+    }
+    for config_key, sensor_id in id_map.items():
+        if config_key in user_sensor_keys:
+            skip_sensor_ids.add(sensor_id)
 
     skip_text_ids = set()
     if "shift_state" in user_text_keys:
@@ -454,9 +483,12 @@ async def to_code(config):
         if definition["id"] not in skip_text_ids:
             await create_text_sensor(var, definition)
 
-    # 用户显式定义的传感器（使用用户提供的配置，不受 internal 影响，用户可自己决定是否 internal）
+    # 用户显式定义的传感器（使用用户提供的配置）
+    # 原有传感器
     if "battery_level" in config:
         await create_sensor(var, {"id": "battery_level"}, user_config=config["battery_level"])
+    if "range" in config:
+        await create_sensor(var, {"id": "range"}, user_config=config["range"])
     if "range_rated_api" in config:
         await create_sensor(var, {"id": "range_rated_api"}, user_config=config["range_rated_api"])
     if "inside_temp" in config:
@@ -477,9 +509,24 @@ async def to_code(config):
         await create_sensor(var, {"id": "charge_rate"}, user_config=config["charge_rate"])
     if "charger_power" in config:
         await create_sensor(var, {"id": "charger_power"}, user_config=config["charger_power"])
+    if "charger_voltage" in config:
+        await create_sensor(var, {"id": "charger_voltage"}, user_config=config["charger_voltage"])
+    if "charger_current" in config:
+        await create_sensor(var, {"id": "charger_current"}, user_config=config["charger_current"])
+    if "charging_rate" in config:
+        await create_sensor(var, {"id": "charging_rate"}, user_config=config["charging_rate"])
     if "time_to_full_charge" in config:
         await create_sensor(var, {"id": "time_to_full_charge"}, user_config=config["time_to_full_charge"])
+    if "tpms_front_left" in config:
+        await create_sensor(var, {"id": "tpms_front_left"}, user_config=config["tpms_front_left"])
+    if "tpms_front_right" in config:
+        await create_sensor(var, {"id": "tpms_front_right"}, user_config=config["tpms_front_right"])
+    if "tpms_rear_left" in config:
+        await create_sensor(var, {"id": "tpms_rear_left"}, user_config=config["tpms_rear_left"])
+    if "tpms_rear_right" in config:
+        await create_sensor(var, {"id": "tpms_rear_right"}, user_config=config["tpms_rear_right"])
 
+    # 二进制传感器
     if "locked" in config:
         await create_binary_sensor(var, {"id": "locked"}, user_config=config["locked"])
     if "user_present" in config:
@@ -491,6 +538,7 @@ async def to_code(config):
     if "charging" in config:
         await create_binary_sensor(var, {"id": "charging"}, user_config=config["charging"])
 
+    # 文本传感器
     if "shift_state" in config:
         await create_text_sensor(var, {"id": "shift_state"}, user_config=config["shift_state"])
     if "charging_state" in config:
@@ -498,6 +546,7 @@ async def to_code(config):
     if "iec61851_state" in config:
         await create_text_sensor(var, {"id": "iec61851_state"}, user_config=config["iec61851_state"])
 
+    # 其余实体（按钮、开关等）
     for definition in BUTTONS: await create_button(var, definition)
     for definition in SWITCHES: await create_switch(var, definition)
     for definition in NUMBERS: await create_number(var, definition, config)
