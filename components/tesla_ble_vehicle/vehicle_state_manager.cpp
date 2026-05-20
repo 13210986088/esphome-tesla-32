@@ -503,8 +503,7 @@ void VehicleStateManager::update_unlocked(bool unlocked) {
             ESP_LOGI(STATE_MANAGER_TAG, "Vehicle lock state: %s", unlocked ? "UNLOCKED" : "LOCKED");
         }
     }
-    // +++ 添加：同步到独立的 locked 二进制传感器 (true = 已锁) +++
-    publish_binary_sensor("locked", !unlocked);
+    publish_binary_sensor("vehicle_locked_sensor", !unlocked);
 }
 
 void VehicleStateManager::update_user_present(bool present) {
