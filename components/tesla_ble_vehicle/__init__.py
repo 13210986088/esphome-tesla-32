@@ -85,10 +85,6 @@ TESLA_ROLES = {
     "CHARGING_MANAGER": "Keys_Role_ROLE_CHARGING_MANAGER",
 }
 
-# =============================================================================
-# ENTITY DEFINITIONS (所有自动实体均标记为 internal: True)
-# =============================================================================
-
 BINARY_SENSORS = [
     {"id": "asleep", "name": "Asleep", "icon": "mdi:sleep", "internal": True},
     {"id": "user_present", "name": "User Present", "icon": "mdi:account-check", "device_class": "occupancy", "internal": True},
@@ -166,10 +162,6 @@ NUMBERS = [
     {"id": "charging_limit", "name": "Charging Limit", "class": TeslaChargingLimitNumber, "setter": "set_charging_limit_number", "icon": "mdi:battery-charging-100", "unit": "%", "min": 50, "max": 100, "step": 1, "internal": True},
 ]
 
-# =============================================================================
-# CONFIG SCHEMA (扩展用户自定义传感器选项)
-# =============================================================================
-
 CONFIG_SCHEMA = (
     cv.Schema(
         {
@@ -177,14 +169,14 @@ CONFIG_SCHEMA = (
             cv.Required(CONF_VIN): cv.string,
             cv.Optional(CONF_CHARGING_AMPS_MAX, default=32): cv.int_range(min=1, max=48),
             cv.Optional(CONF_ROLE, default="DRIVER"): cv.enum(TESLA_ROLES, upper=True),
-            cv.Optional(CONF_VCSEC_POLL_INTERVAL, default=10): cv.int_range(min=5, max=300),
-            cv.Optional(CONF_INFOTAINMENT_POLL_INTERVAL_AWAKE, default=30): cv.int_range(min=10, max=600),
-            cv.Optional(CONF_INFOTAINMENT_POLL_INTERVAL_ACTIVE, default=10): cv.int_range(min=5, max=120),
-            cv.Optional(CONF_INFOTAINMENT_SLEEP_TIMEOUT, default=660): cv.int_range(min=60, max=3600),
 
-            # ★ 用户自定义数值传感器 (可选) — 已扩展
+
+            cv.Optional(CONF_VCSEC_POLL_INTERVAL, default=10.0): cv.float_range(min=0.5, max=300.0),
+            cv.Optional(CONF_INFOTAINMENT_POLL_INTERVAL_AWAKE, default=30.0): cv.float_range(min=0.5, max=600.0),
+            cv.Optional(CONF_INFOTAINMENT_POLL_INTERVAL_ACTIVE, default=10.0): cv.float_range(min=0.5, max=120.0),
+            cv.Optional(CONF_INFOTAINMENT_SLEEP_TIMEOUT, default=660.0): cv.float_range(min=0.5, max=3600.0),
             cv.Optional("battery_level"): sensor.sensor_schema(unit_of_measurement="%", accuracy_decimals=0),
-            cv.Optional("range"): sensor.sensor_schema(unit_of_measurement="mi", device_class="distance", accuracy_decimals=0),          # 新增
+            cv.Optional("range"): sensor.sensor_schema(unit_of_measurement="mi", device_class="distance", accuracy_decimals=0), 
             cv.Optional("range_rated_api"): sensor.sensor_schema(unit_of_measurement="km", accuracy_decimals=1),
             cv.Optional("inside_temp"): sensor.sensor_schema(unit_of_measurement="°C", device_class="temperature", accuracy_decimals=1),
             cv.Optional("outside_temp"): sensor.sensor_schema(unit_of_measurement="°C", device_class="temperature", accuracy_decimals=1),
@@ -195,23 +187,19 @@ CONFIG_SCHEMA = (
             cv.Optional("charge_energy_added"): sensor.sensor_schema(unit_of_measurement="kWh", device_class="energy", accuracy_decimals=2),
             cv.Optional("charge_rate"): sensor.sensor_schema(unit_of_measurement="km/h", accuracy_decimals=1),
             cv.Optional("charger_power"): sensor.sensor_schema(unit_of_measurement="kW", device_class="power", accuracy_decimals=0),
-            cv.Optional("charger_voltage"): sensor.sensor_schema(unit_of_measurement="V", device_class="voltage", accuracy_decimals=0),  # 新增
-            cv.Optional("charger_current"): sensor.sensor_schema(unit_of_measurement="A", device_class="current", accuracy_decimals=1),  # 新增
-            cv.Optional("charging_rate"): sensor.sensor_schema(unit_of_measurement="mph", device_class="speed", accuracy_decimals=1),    # 新增
+            cv.Optional("charger_voltage"): sensor.sensor_schema(unit_of_measurement="V", device_class="voltage", accuracy_decimals=0), 
+            cv.Optional("charger_current"): sensor.sensor_schema(unit_of_measurement="A", device_class="current", accuracy_decimals=1), 
+            cv.Optional("charging_rate"): sensor.sensor_schema(unit_of_measurement="mph", device_class="speed", accuracy_decimals=1),   
             cv.Optional("time_to_full_charge"): sensor.sensor_schema(unit_of_measurement="min", device_class="duration", accuracy_decimals=0),
-            cv.Optional("tpms_front_left"): sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),   # 新增
-            cv.Optional("tpms_front_right"): sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),  # 新增
-            cv.Optional("tpms_rear_left"): sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),    # 新增
-            cv.Optional("tpms_rear_right"): sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),   # 新增
-
-            # ★ 用户自定义二进制传感器 (可选)
+            cv.Optional("tpms_front_left"): sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),  
+            cv.Optional("tpms_front_right"): sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),  
+            cv.Optional("tpms_rear_left"): sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),   
+            cv.Optional("tpms_rear_right"): sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),  
             cv.Optional("locked"): binary_sensor.binary_sensor_schema(device_class="lock"),
             cv.Optional("user_present"): binary_sensor.binary_sensor_schema(device_class="presence"),
             cv.Optional("charge_flap_open"): binary_sensor.binary_sensor_schema(device_class="opening"),
             cv.Optional("asleep"): binary_sensor.binary_sensor_schema(),
             cv.Optional("charging"): binary_sensor.binary_sensor_schema(device_class="battery_charging"),
-
-            # ★ 用户自定义文本传感器 (可选)
             cv.Optional("shift_state"): text_sensor.text_sensor_schema(),
             cv.Optional("charging_state"): text_sensor.text_sensor_schema(),
             cv.Optional("iec61851_state"): text_sensor.text_sensor_schema(),
@@ -220,10 +208,6 @@ CONFIG_SCHEMA = (
     .extend(cv.polling_component_schema("10s"))
     .extend(ble_client.BLE_CLIENT_SCHEMA)
 )
-
-# =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
 
 def get_device_class_const(component_module, device_class_str):
     if device_class_str is None:
@@ -388,10 +372,6 @@ async def create_climate_entity(var, definition):
     if definition.get("setter"): cg.add(getattr(var, definition["setter"])(clm))
     return clm
 
-# =============================================================================
-# CODE GENERATION (修改 to_code 以达到不重复创建)
-# =============================================================================
-
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
@@ -399,22 +379,20 @@ async def to_code(config):
     cg.add(var.set_vin(config[CONF_VIN]))
     role = config[CONF_ROLE]
     charging_amps_max = config[CONF_CHARGING_AMPS_MAX]
-    vcsec_interval_seconds = config[CONF_VCSEC_POLL_INTERVAL]
+    vcsec_interval_seconds = config[CONF_VCSEC_POLL_INTERVAL] 
 
-    cg.add(var.set_update_interval(vcsec_interval_seconds * 1000))
+    cg.add(var.set_update_interval(int(vcsec_interval_seconds * 1000)))
     cg.add(var.set_role(TESLA_ROLES[role]))
     cg.add(var.set_charging_amps_max(charging_amps_max))
-    cg.add(var.set_vcsec_poll_interval(vcsec_interval_seconds * 1000))
-    cg.add(var.set_infotainment_poll_interval_awake(config[CONF_INFOTAINMENT_POLL_INTERVAL_AWAKE] * 1000))
-    cg.add(var.set_infotainment_poll_interval_active(config[CONF_INFOTAINMENT_POLL_INTERVAL_ACTIVE] * 1000))
-    cg.add(var.set_infotainment_sleep_timeout(config[CONF_INFOTAINMENT_SLEEP_TIMEOUT] * 1000))
+    cg.add(var.set_vcsec_poll_interval(int(vcsec_interval_seconds * 1000)))
+    cg.add(var.set_infotainment_poll_interval_awake(int(config[CONF_INFOTAINMENT_POLL_INTERVAL_AWAKE] * 1000)))
+    cg.add(var.set_infotainment_poll_interval_active(int(config[CONF_INFOTAINMENT_POLL_INTERVAL_ACTIVE] * 1000)))
+    cg.add(var.set_infotainment_sleep_timeout(int(config[CONF_INFOTAINMENT_SLEEP_TIMEOUT] * 1000)))
 
-    # 记录用户显式配置了哪些传感器键，避免与原有列表重复创建
     user_sensor_keys = set()
     user_binary_keys = set()
     user_text_keys = set()
-
-    # 扩展 user_sensor_keys，包含新增的传感器
+    
     for skey in ["battery_level", "range", "range_rated_api", "inside_temp", "outside_temp",
                  "driver_temp_setting", "passenger_temp_setting", "odometer", "speed",
                  "charge_energy_added", "charge_rate", "charger_power", "charger_voltage",
@@ -436,8 +414,6 @@ async def to_code(config):
         skip_binary_ids.add("user_present")
     if "asleep" in user_binary_keys:
         skip_binary_ids.add("asleep")
-
-    # 扩展 skip_sensor_ids，包含所有用户可能显式定义的传感器 ID
     skip_sensor_ids = set()
     id_map = {
         "battery_level": "battery_level",
@@ -482,9 +458,7 @@ async def to_code(config):
     for definition in TEXT_SENSORS:
         if definition["id"] not in skip_text_ids:
             await create_text_sensor(var, definition)
-
-    # 用户显式定义的传感器（使用用户提供的配置）
-    # 原有传感器
+            
     if "battery_level" in config:
         await create_sensor(var, {"id": "battery_level"}, user_config=config["battery_level"])
     if "range" in config:
@@ -526,7 +500,6 @@ async def to_code(config):
     if "tpms_rear_right" in config:
         await create_sensor(var, {"id": "tpms_rear_right"}, user_config=config["tpms_rear_right"])
 
-    # 二进制传感器
     if "locked" in config:
         await create_binary_sensor(var, {"id": "locked"}, user_config=config["locked"])
     if "user_present" in config:
@@ -538,7 +511,6 @@ async def to_code(config):
     if "charging" in config:
         await create_binary_sensor(var, {"id": "charging"}, user_config=config["charging"])
 
-    # 文本传感器
     if "shift_state" in config:
         await create_text_sensor(var, {"id": "shift_state"}, user_config=config["shift_state"])
     if "charging_state" in config:
@@ -546,17 +518,12 @@ async def to_code(config):
     if "iec61851_state" in config:
         await create_text_sensor(var, {"id": "iec61851_state"}, user_config=config["iec61851_state"])
 
-    # 其余实体（按钮、开关等）
     for definition in BUTTONS: await create_button(var, definition)
     for definition in SWITCHES: await create_switch(var, definition)
     for definition in NUMBERS: await create_number(var, definition, config)
     for definition in LOCKS: await create_lock(var, definition)
     for definition in COVERS: await create_cover(var, definition)
     await create_climate_entity(var, CLIMATE)
-
-# =============================================================================
-# ACTION REGISTRATION (不变)
-# =============================================================================
 
 TESLA_WAKE_ACTION_SCHEMA = cv.Schema({cv.Required(CONF_ID): cv.use_id(TeslaBLEVehicle)})
 TESLA_PAIR_ACTION_SCHEMA = cv.Schema({cv.Required(CONF_ID): cv.use_id(TeslaBLEVehicle)})
