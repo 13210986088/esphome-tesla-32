@@ -284,11 +284,13 @@ void VehicleStateManager::update_charge_state(const CarServer_ChargeState& charg
 void VehicleStateManager::update_climate_state(const CarServer_ClimateState& climate_state) {
     ESP_LOGD(STATE_MANAGER_TAG, "Updating climate state");
     
-    // Inside temperature (used internally for climate entity)
+    // Inside temperature
     if (climate_state.which_optional_inside_temp_celsius) {
         const float temp = climate_state.optional_inside_temp_celsius.inside_temp_celsius;
         if (temp >= -40.0f && temp <= 60.0f && std::isfinite(temp)) {
             current_inside_temp_ = temp;
+            // +++ 添加：发布到独立的 inside_temp 传感器 +++
+            publish_sensor("inside_temp", temp);
         }
     }
     
@@ -300,11 +302,21 @@ void VehicleStateManager::update_climate_state(const CarServer_ClimateState& cli
         }
     }
     
-    // Driver temperature setting (used for climate entity target temp)
+    // Driver temperature setting
     if (climate_state.which_optional_driver_temp_setting) {
         const float temp = climate_state.optional_driver_temp_setting.driver_temp_setting;
         if (temp >= 15.0f && temp <= 30.0f && std::isfinite(temp)) {
             target_temp_ = temp;
+            // +++ 添加：发布到独立的 driver_temp_setting 传感器 +++
+            publish_sensor("driver_temp_setting", temp);
+        }
+    }
+    
+    // +++ 添加：副驾温度设定（原本缺失） +++
+    if (climate_state.which_optional_passenger_temp_setting) {
+        const float temp = climate_state.optional_passenger_temp_setting.passenger_temp_setting;
+        if (temp >= 15.0f && temp <= 30.0f && std::isfinite(temp)) {
+            publish_sensor("passenger_temp_setting", temp);
         }
     }
     
@@ -338,6 +350,15 @@ void VehicleStateManager::update_drive_state(const CarServer_DriveState& drive_s
         // Parking brake sensor - true when in P
         const bool parked = (drive_state.shift_state.which_type == CarServer_ShiftState_P_tag);
         publish_binary_sensor("parking_brake", parked);
+    }
+    
+    // +++ 添加：速度 (mph → km/h) +++
+    if (drive_state.which_optional_speed) {
+        const float speed_mph = static_cast<float>(drive_state.optional_speed.speed);
+        const float speed_kmh = speed_mph * 1.60934f;
+        if (speed_kmh >= 0.0f && speed_kmh <= 300.0f && std::isfinite(speed_kmh)) {
+            publish_sensor("speed", speed_kmh);
+        }
     }
     
     // Odometer (convert from hundredths of a mile to miles)
@@ -482,6 +503,8 @@ void VehicleStateManager::update_unlocked(bool unlocked) {
             ESP_LOGI(STATE_MANAGER_TAG, "Vehicle lock state: %s", unlocked ? "UNLOCKED" : "LOCKED");
         }
     }
+    // +++ 添加：同步到独立的 locked 二进制传感器 (true = 已锁) +++
+    publish_binary_sensor("locked", !unlocked);
 }
 
 void VehicleStateManager::update_user_present(bool present) {
@@ -498,6 +521,8 @@ void VehicleStateManager::update_charge_flap_open(bool open) {
         charge_port_door_cover_->publish_state();
         ESP_LOGD(STATE_MANAGER_TAG, "Charge port door: %s (from VCSEC)", open ? "OPEN" : "CLOSED");
     }
+    // +++ 添加：同步到独立的 charge_flap_open 二进制传感器 +++
+    publish_binary_sensor("charge_flap_open", open);
 }
 
 void VehicleStateManager::update_charging_amps(float amps) {
