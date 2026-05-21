@@ -173,17 +173,27 @@ void VehicleStateManager::update_charge_state(const CarServer_ChargeState& charg
         }
     }
     
+    // 新增：发布额定续航（range_rated_api）
+    if (charge_state.which_optional_range_rated_api) {
+        const float rated_range = charge_state.optional_range_rated_api.range_rated_api;
+        if (rated_range >= 0.0f && rated_range <= 500.0f && std::isfinite(rated_range)) {
+            publish_sensor("range_rated_api", rated_range);
+        }
+    }
+    
     if (charge_state.which_optional_charge_energy_added) {
         const float energy = charge_state.optional_charge_energy_added.charge_energy_added;
         if (energy >= 0.0f && std::isfinite(energy)) {
-            publish_sensor("energy_added", energy);
+            // 修正 ID，与 YAML 关键字 charge_energy_added 匹配
+            publish_sensor("charge_energy_added", energy);
         }
     }
     
     if (charge_state.which_optional_minutes_to_full_charge) {
         const float minutes = static_cast<float>(charge_state.optional_minutes_to_full_charge.minutes_to_full_charge);
         if (minutes >= 0.0f && std::isfinite(minutes)) {
-            publish_sensor("time_to_full", minutes);
+            // 修正 ID，与 YAML 关键字 time_to_full_charge 匹配
+            publish_sensor("time_to_full_charge", minutes);
         }
     }
     
@@ -434,7 +444,7 @@ void VehicleStateManager::update_asleep(bool asleep) {
 }
 
 void VehicleStateManager::update_unlocked(bool unlocked) {
-    ESP_LOGE("DEBUG", "update_unlocked called, unlocked=%d", unlocked);
+    ESP_LOGD("DEBUG", "update_unlocked called, unlocked=%d", unlocked);
     if (doors_lock_ != nullptr) {
         auto new_state = unlocked ? lock::LOCK_STATE_UNLOCKED : lock::LOCK_STATE_LOCKED;
         if (doors_lock_->state != new_state) {
