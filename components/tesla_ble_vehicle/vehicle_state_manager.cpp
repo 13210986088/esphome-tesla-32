@@ -533,7 +533,7 @@ void VehicleStateManager::track_command_issued() {
 }
 
 bool VehicleStateManager::publish_sensor_state(binary_sensor::BinarySensor* sensor, bool state) {
-    if (sensor != nullptr && (!sensor->has_state() || sensor->state != state)) {
+    if (sensor != nullptr) {
         sensor->publish_state(state);
         return true;
     }
@@ -541,7 +541,7 @@ bool VehicleStateManager::publish_sensor_state(binary_sensor::BinarySensor* sens
 }
 
 bool VehicleStateManager::publish_sensor_state(sensor::Sensor* sensor, float state) {
-    if (sensor != nullptr && (!sensor->has_state() || std::abs(sensor->state - state) > 0.001f)) {
+    if (sensor != nullptr) {
         sensor->publish_state(state);
         return true;
     }
@@ -549,7 +549,7 @@ bool VehicleStateManager::publish_sensor_state(sensor::Sensor* sensor, float sta
 }
 
 bool VehicleStateManager::publish_sensor_state(switch_::Switch* switch_comp, bool state) {
-    if (switch_comp != nullptr && (!switch_comp->has_state() || switch_comp->state != state)) {
+    if (switch_comp != nullptr) {
         switch_comp->publish_state(state);
         return true;
     }
@@ -557,7 +557,7 @@ bool VehicleStateManager::publish_sensor_state(switch_::Switch* switch_comp, boo
 }
 
 bool VehicleStateManager::publish_sensor_state(number::Number* number_comp, float state) {
-    if (number_comp != nullptr && (!number_comp->has_state() || std::abs(number_comp->state - state) > 0.001f)) {
+    if (number_comp != nullptr) {
         number_comp->publish_state(state);
         return true;
     }
@@ -565,7 +565,7 @@ bool VehicleStateManager::publish_sensor_state(number::Number* number_comp, floa
 }
 
 bool VehicleStateManager::publish_sensor_state(text_sensor::TextSensor* sensor, const std::string& state) {
-    if (sensor != nullptr && (!sensor->has_state() || sensor->state != state)) {
+    if (sensor != nullptr) {
         sensor->publish_state(state);
         return true;
     }
