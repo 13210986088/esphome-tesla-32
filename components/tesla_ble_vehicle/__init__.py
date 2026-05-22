@@ -171,10 +171,10 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_ROLE, default="DRIVER"): cv.enum(TESLA_ROLES, upper=True),
 
 
-            cv.Optional(CONF_VCSEC_POLL_INTERVAL, default=10.0): cv.float_range(min=0.5, max=300.0),
-            cv.Optional(CONF_INFOTAINMENT_POLL_INTERVAL_AWAKE, default=30.0): cv.float_range(min=0.5, max=600.0),
-            cv.Optional(CONF_INFOTAINMENT_POLL_INTERVAL_ACTIVE, default=10.0): cv.float_range(min=0.5, max=120.0),
-            cv.Optional(CONF_INFOTAINMENT_SLEEP_TIMEOUT, default=660.0): cv.float_range(min=0.5, max=3600.0),
+            cv.Optional(CONF_VCSEC_POLL_INTERVAL, default=10.0): cv.float_range(min=0.2, max=300.0),
+            cv.Optional(CONF_INFOTAINMENT_POLL_INTERVAL_AWAKE, default=30.0): cv.float_range(min=0.2, max=600.0),
+            cv.Optional(CONF_INFOTAINMENT_POLL_INTERVAL_ACTIVE, default=10.0): cv.float_range(min=0.2, max=120.0),
+            cv.Optional(CONF_INFOTAINMENT_SLEEP_TIMEOUT, default=660.0): cv.float_range(min=0.2, max=3600.0),
             cv.Optional("battery_level"): sensor.sensor_schema(unit_of_measurement="%", accuracy_decimals=0),
             cv.Optional("range"): sensor.sensor_schema(unit_of_measurement="mi", device_class="distance", accuracy_decimals=0), 
             cv.Optional("range_rated_api"): sensor.sensor_schema(unit_of_measurement="km", accuracy_decimals=1),
