@@ -10,9 +10,8 @@
 namespace esphome {
 namespace tesla_ble_vehicle {
 
-// Charging limit bounds - must match Python schema range in __init__.py
-static constexpr int MIN_CHARGING_LIMIT = 50;
-static constexpr int MAX_CHARGING_LIMIT = 100;
+// NOTE: MIN_CHARGING_LIMIT / MAX_CHARGING_LIMIT are defined in common.h
+// (do NOT redeclare here or you'll get a redefinition error).
 
 void tesla_ble_log_callback(TeslaBLE::LogLevel level, const char *tag, int line, const char *format, va_list args) {
   if (tag == nullptr) tag = "TeslaBLE";
