@@ -123,6 +123,7 @@ public:
     bool is_user_present() const;
     bool is_charge_flap_open() const;
     bool is_charging() const { return is_charging_; }
+    bool is_climate_on() const { return climate_on_; }
     float get_charging_amps() const;
     
     // ==========================================================================
