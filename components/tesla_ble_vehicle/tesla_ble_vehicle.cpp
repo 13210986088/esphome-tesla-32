@@ -10,6 +10,10 @@
 namespace esphome {
 namespace tesla_ble_vehicle {
 
+// Charging limit bounds - must match Python schema range in __init__.py
+static constexpr int MIN_CHARGING_LIMIT = 50;
+static constexpr int MAX_CHARGING_LIMIT = 100;
+
 void tesla_ble_log_callback(TeslaBLE::LogLevel level, const char *tag, int line, const char *format, va_list args) {
   if (tag == nullptr) tag = "TeslaBLE";
   if (format == nullptr) return;
@@ -94,7 +98,9 @@ void TeslaBLEVehicle::update() {
   uint32_t now = millis();
   if (now - last_vcsec_poll_ >= vcsec_poll_interval_) { ESP_LOGI(TAG, "Polling VCSEC"); vehicle_->vcsec_poll(); last_vcsec_poll_ = now; }
   const bool is_asleep = state_manager_->is_asleep();
-  const bool is_active = state_manager_->is_charging() || state_manager_->is_user_present() || state_manager_->is_unlocked();
+  // Active = needs more frequent infotainment polling (charging, user in car, climate on, or moving)
+  const bool is_active = state_manager_->is_charging() || state_manager_->is_user_present() ||
+                         state_manager_->is_unlocked() || state_manager_->is_climate_on();
   uint32_t infotainment_interval = infotainment_poll_interval_awake_;
   if (is_asleep) infotainment_interval = infotainment_sleep_timeout_;
   else if (is_active) infotainment_interval = infotainment_poll_interval_active_;
@@ -112,7 +118,12 @@ void TeslaBLEVehicle::dump_config() {
 
 void TeslaBLEVehicle::set_vin(const char *vin) { if (vin == nullptr) return; vin_ = vin; ESP_LOGD(TAG, "VIN set to: %s", vin_.c_str()); if (vehicle_) vehicle_->set_vin(vin_); }
 void TeslaBLEVehicle::set_role(const std::string &role) { ESP_LOGD(TAG, "Setting role: %s", role.c_str()); role_ = role; }
-void TeslaBLEVehicle::set_charging_amps_max(int amps_max) { ESP_LOGD(TAG, "Setting charging amps max: %d", amps_max); if (amps_max > 0 && state_manager_) state_manager_->set_charging_amps_max(amps_max); }
+void TeslaBLEVehicle::set_charging_amps_max(int amps_max) {
+  ESP_LOGD(TAG, "Setting charging amps max: %d", amps_max);
+  if (amps_max <= 0) return;
+  charging_amps_max_ = amps_max;  // Cache locally first - state_manager_ may not be ready yet
+  if (state_manager_) state_manager_->set_charging_amps_max(amps_max);
+}
 void TeslaBLEVehicle::set_vcsec_poll_interval(uint32_t interval_ms) { vcsec_poll_interval_ = interval_ms; }
 void TeslaBLEVehicle::set_infotainment_poll_interval_awake(uint32_t interval_ms) { infotainment_poll_interval_awake_ = interval_ms; }
 void TeslaBLEVehicle::set_infotainment_poll_interval_active(uint32_t interval_ms) { infotainment_poll_interval_active_ = interval_ms; }
@@ -149,13 +160,14 @@ int TeslaBLEVehicle::wake_vehicle() {
   ESP_LOGI(TAG, "Sending wake command"); vehicle_->wake(); return 0;
 }
 
-void TeslaBLEVehicle::start_driving() {
+int TeslaBLEVehicle::start_driving() {
   ESP_LOGI(TAG, "启动驾驶流程...");
-  if (vehicle_) {
-    vehicle_->start_driving();
-  } else {
+  if (!vehicle_) {
     ESP_LOGE(TAG, "Vehicle 实例不可用");
+    return -1;
   }
+  vehicle_->start_driving();
+  return 0;
 }
 
 int TeslaBLEVehicle::start_pairing() {
@@ -189,7 +201,7 @@ int TeslaBLEVehicle::set_charging_state(bool charging) {
 int TeslaBLEVehicle::set_charging_amps(int amps) {
   ESP_LOGI(TAG, "Set charging amps: %d", amps);
   if (amps < 0) return -1;
-  int max_amps = state_manager_->get_charging_amps_max();
+  int max_amps = state_manager_ ? state_manager_->get_charging_amps_max() : charging_amps_max_;
   if (amps > max_amps) amps = max_amps;
   if (state_manager_) state_manager_->track_command_issued();
   if (!vehicle_) return -1;
@@ -204,28 +216,48 @@ int TeslaBLEVehicle::set_charging_limit(int limit) {
   vehicle_->set_charging_limit(limit); return 0;
 }
 
-void TeslaBLEVehicle::lock_vehicle() { ESP_LOGI(TAG, "Lock vehicle requested"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->lock(); }
-void TeslaBLEVehicle::unlock_vehicle() { ESP_LOGI(TAG, "Unlock vehicle requested"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->unlock(); }
-void TeslaBLEVehicle::open_trunk() { ESP_LOGI(TAG, "Open trunk requested"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->open_trunk(); }
-void TeslaBLEVehicle::close_trunk() { ESP_LOGI(TAG, "Close trunk requested"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->close_trunk(); }
-void TeslaBLEVehicle::open_frunk() { ESP_LOGI(TAG, "Open frunk requested"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->open_frunk(); }
-void TeslaBLEVehicle::open_charge_port() { ESP_LOGI(TAG, "Open charge port requested"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->open_charge_port(); }
-void TeslaBLEVehicle::close_charge_port() { ESP_LOGI(TAG, "Close charge port requested"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->close_charge_port(); }
-void TeslaBLEVehicle::unlock_charge_port() { ESP_LOGI(TAG, "Unlock charge port latch requested"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->unlock_charge_port(); }
-void TeslaBLEVehicle::unlatch_driver_door() { ESP_LOGI(TAG, "Unlatch driver door requested"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->unlatch_driver_door(); }
+// ---------- 重复模式宏 ----------
+// 模式: log + 通知 state_manager 跟踪 + 调用 vehicle
+// 注意: track_command_issued 必须在 vehicle 调用前,以保证 state 状态一致
+#define EXEC_VOID_COMMAND(method_name, log_msg, vehicle_method) \
+  void TeslaBLEVehicle::method_name() { \
+    ESP_LOGI(TAG, "%s", log_msg); \
+    if (state_manager_) state_manager_->track_command_issued(); \
+    if (vehicle_) vehicle_->vehicle_method(); \
+  }
 
-void TeslaBLEVehicle::set_climate_on(bool enable) { ESP_LOGI(TAG, "Climate %s requested", enable ? "ON" : "OFF"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->set_climate(enable); }
+#define EXEC_BOOL_COMMAND(method_name, log_msg, vehicle_method) \
+  void TeslaBLEVehicle::method_name(bool enable) { \
+    ESP_LOGI(TAG, "%s", log_msg, enable ? "ON" : "OFF"); \
+    if (state_manager_) state_manager_->track_command_issued(); \
+    if (vehicle_) vehicle_->vehicle_method(enable); \
+  }
+
+EXEC_VOID_COMMAND(lock_vehicle, "Lock vehicle requested", lock)
+EXEC_VOID_COMMAND(unlock_vehicle, "Unlock vehicle requested", unlock)
+EXEC_VOID_COMMAND(open_trunk, "Open trunk requested", open_trunk)
+EXEC_VOID_COMMAND(close_trunk, "Close trunk requested", close_trunk)
+EXEC_VOID_COMMAND(open_frunk, "Open frunk requested", open_frunk)
+EXEC_VOID_COMMAND(open_charge_port, "Open charge port requested", open_charge_port)
+EXEC_VOID_COMMAND(close_charge_port, "Close charge port requested", close_charge_port)
+EXEC_VOID_COMMAND(unlock_charge_port, "Unlock charge port latch requested", unlock_charge_port)
+EXEC_VOID_COMMAND(unlatch_driver_door, "Unlatch driver door requested", unlatch_driver_door)
+EXEC_VOID_COMMAND(flash_lights, "Flash lights requested", flash_lights)
+EXEC_VOID_COMMAND(honk_horn, "Honk horn requested", honk_horn)
+EXEC_VOID_COMMAND(vent_windows, "Vent windows requested", vent_windows)
+EXEC_VOID_COMMAND(close_windows, "Close windows requested", close_windows)
+
+EXEC_BOOL_COMMAND(set_climate_on, "Climate %s requested", set_climate)
+EXEC_BOOL_COMMAND(set_bioweapon_mode, "Bioweapon mode %s requested", set_bioweapon_mode)
+EXEC_BOOL_COMMAND(set_preconditioning_max, "Preconditioning max (defrost) %s requested", set_preconditioning_max)
+EXEC_BOOL_COMMAND(set_steering_wheel_heat, "Steering wheel heat %s requested", set_steering_wheel_heat)
+EXEC_BOOL_COMMAND(set_sentry_mode, "Sentry mode %s requested", set_sentry_mode)
+
+#undef EXEC_VOID_COMMAND
+#undef EXEC_BOOL_COMMAND
+
 void TeslaBLEVehicle::set_climate_temp(float temp) { ESP_LOGI(TAG, "Climate temperature %.1f°C requested", temp); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->set_climate_temp(temp); }
 void TeslaBLEVehicle::set_climate_keeper(int mode) { const char *mode_names[] = {"Off", "On", "Dog", "Camp"}; ESP_LOGI(TAG, "Climate keeper %s requested", (mode >= 0 && mode <= 3) ? mode_names[mode] : "Unknown"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->set_climate_keeper(mode); }
-void TeslaBLEVehicle::set_bioweapon_mode(bool enable) { ESP_LOGI(TAG, "Bioweapon mode %s requested", enable ? "ON" : "OFF"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->set_bioweapon_mode(enable); }
-void TeslaBLEVehicle::set_preconditioning_max(bool enable) { ESP_LOGI(TAG, "Preconditioning max (defrost) %s requested", enable ? "ON" : "OFF"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->set_preconditioning_max(enable); }
-void TeslaBLEVehicle::set_steering_wheel_heat(bool enable) { ESP_LOGI(TAG, "Steering wheel heat %s requested", enable ? "ON" : "OFF"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->set_steering_wheel_heat(enable); }
-
-void TeslaBLEVehicle::flash_lights() { ESP_LOGI(TAG, "Flash lights requested"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->flash_lights(); }
-void TeslaBLEVehicle::honk_horn() { ESP_LOGI(TAG, "Honk horn requested"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->honk_horn(); }
-void TeslaBLEVehicle::set_sentry_mode(bool enable) { ESP_LOGI(TAG, "Sentry mode %s requested", enable ? "ON" : "OFF"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->set_sentry_mode(enable); }
-void TeslaBLEVehicle::vent_windows() { ESP_LOGI(TAG, "Vent windows requested"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->vent_windows(); }
-void TeslaBLEVehicle::close_windows() { ESP_LOGI(TAG, "Close windows requested"); if (state_manager_) state_manager_->track_command_issued(); if (vehicle_) vehicle_->close_windows(); }
 
 void TeslaBLEVehicle::update_charging_amps_max_value(int32_t new_max) { if (pending_charging_amps_number_) { auto *tesla_amps = static_cast<TeslaChargingAmpsNumber *>(pending_charging_amps_number_); tesla_amps->update_max_value(new_max); ESP_LOGD(TAG, "Updated charging amps max value to %d A", new_max); } }
 
@@ -263,6 +295,7 @@ void TeslaBLEVehicle::handle_connection_lost() {
   if (vehicle_) vehicle_->set_connected(false);
   if (ble_adapter_) ble_adapter_->clear_queues();
   last_infotainment_poll_ = 0; last_vcsec_poll_ = 0;
+  if (state_manager_) state_manager_->set_sensors_available(false);
   this->status_set_warning("BLE connection lost");
 }
 
