@@ -79,6 +79,12 @@ CONF_INFOTAINMENT_POLL_INTERVAL_AWAKE = "infotainment_poll_interval_awake"
 CONF_INFOTAINMENT_POLL_INTERVAL_ACTIVE = "infotainment_poll_interval_active"
 CONF_INFOTAINMENT_SLEEP_TIMEOUT = "infotainment_sleep_timeout"
 
+# Must match C++ static constexpr in tesla_ble_vehicle.cpp
+MIN_CHARGING_LIMIT = 50
+MAX_CHARGING_LIMIT = 100
+MIN_CHARGING_AMPS = 0
+MAX_CHARGING_AMPS = 80
+
 TESLA_ROLES = {
     "OWNER": "Keys_Role_ROLE_OWNER",
     "DRIVER": "Keys_Role_ROLE_DRIVER",
@@ -395,224 +401,141 @@ async def create_climate_entity(var, definition):
     if definition.get("setter"): cg.add(getattr(var, definition["setter"])(clm))
     return clm
 
+# Map: YAML config key -> internal auto-created entity id to skip when user provides the key.
+# None means no auto-entity to skip (purely user-defined; e.g. "locked" has no auto version).
+SENSOR_OVERRIDES = {
+    "battery_level": "battery_level",
+    "range": "range",
+    "range_rated_api": "range_rated_api",
+    "inside_temp": "inside_temp",
+    "outside_temp": "outside_temp",
+    "driver_temp_setting": "driver_temp_setting",
+    "passenger_temp_setting": "passenger_temp_setting",
+    "odometer": "odometer",
+    "speed": "speed",
+    "charge_energy_added": "charge_energy_added",
+    "charge_rate": "charge_rate",
+    "charger_power": "charger_power",
+    "charger_voltage": "charger_voltage",
+    "charger_current": "charger_current",
+    "charging_rate": "charging_rate",
+    "time_to_full_charge": "time_to_full_charge",
+    "tpms_front_left": "tpms_front_left",
+    "tpms_front_right": "tpms_front_right",
+    "tpms_rear_left": "tpms_rear_left",
+    "tpms_rear_right": "tpms_rear_right",
+}
+
+BINARY_SENSOR_OVERRIDES = {
+    "locked": None,                # Purely user-defined
+    "user_present": "user_present",
+    "charge_flap_open": None,      # Purely user-defined
+    "asleep": "asleep",
+    "charging": "charger",         # "charging" user key overrides "charger" auto entity
+    "parking_brake": "parking_brake",
+    "door_driver_front": "door_driver_front",
+    "door_driver_rear": "door_driver_rear",
+    "door_passenger_front": "door_passenger_front",
+    "door_passenger_rear": "door_passenger_rear",
+    "window_driver_front": "window_driver_front",
+    "window_driver_rear": "window_driver_rear",
+    "window_passenger_front": "window_passenger_front",
+    "window_passenger_rear": "window_passenger_rear",
+}
+
+TEXT_SENSOR_OVERRIDES = {
+    "shift_state": "shift_state",
+    "charging_state": "charging_state",
+    "iec61851_state": "iec61851_state",
+}
+
+# Switches that the user can override; key is the user-config key, value is the auto id to skip.
+SWITCH_OVERRIDES = {
+    "charging_switch": "charging",
+    "steering_wheel_heat_switch": "steering_wheel_heat",
+}
+
+NUMBER_OVERRIDES = {
+    "charging_amps": "charging_amps",
+}
+
+LOCK_OVERRIDES = {
+    "doors_lock": "doors",
+    "charge_port_latch_lock": "charge_port_latch",
+}
+
+COVER_OVERRIDES = {
+    "frunk_cover": "frunk",
+    "trunk_cover": "trunk",
+    "windows_cover": "windows",
+    "charge_port_door_cover": "charge_port_door",
+}
+
+
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await ble_client.register_ble_node(var, config)
-    cg.add(var.set_vin(config[CONF_VIN]))
-    role = config[CONF_ROLE]
-    charging_amps_max = config[CONF_CHARGING_AMPS_MAX]
-    vcsec_interval_seconds = config[CONF_VCSEC_POLL_INTERVAL] 
 
-    cg.add(var.set_update_interval(int(vcsec_interval_seconds * 1000)))
-    cg.add(var.set_role(TESLA_ROLES[role]))
-    cg.add(var.set_charging_amps_max(charging_amps_max))
-    cg.add(var.set_vcsec_poll_interval(int(vcsec_interval_seconds * 1000)))
+    cg.add(var.set_vin(config[CONF_VIN]))
+    cg.add(var.set_role(TESLA_ROLES[config[CONF_ROLE]]))
+    cg.add(var.set_charging_amps_max(config[CONF_CHARGING_AMPS_MAX]))
+
+    vcsec_ms = int(config[CONF_VCSEC_POLL_INTERVAL] * 1000)
+    cg.add(var.set_update_interval(vcsec_ms))
+    cg.add(var.set_vcsec_poll_interval(vcsec_ms))
     cg.add(var.set_infotainment_poll_interval_awake(int(config[CONF_INFOTAINMENT_POLL_INTERVAL_AWAKE] * 1000)))
     cg.add(var.set_infotainment_poll_interval_active(int(config[CONF_INFOTAINMENT_POLL_INTERVAL_ACTIVE] * 1000)))
     cg.add(var.set_infotainment_sleep_timeout(int(config[CONF_INFOTAINMENT_SLEEP_TIMEOUT] * 1000)))
 
-    user_sensor_keys = set()
-    user_binary_keys = set()
-    user_text_keys = set()
-    
-    for skey in ["battery_level", "range", "range_rated_api", "inside_temp", "outside_temp",
-                 "driver_temp_setting", "passenger_temp_setting", "odometer", "speed",
-                 "charge_energy_added", "charge_rate", "charger_power", "charger_voltage",
-                 "charger_current", "charging_rate", "time_to_full_charge",
-                 "tpms_front_left", "tpms_front_right", "tpms_rear_left", "tpms_rear_right"]:
-        if skey in config:
-            user_sensor_keys.add(skey)
+    # Compute skip sets: which auto entities to skip because user provided a custom one.
+    skip_binary = {auto_id for user_key, auto_id in BINARY_SENSOR_OVERRIDES.items()
+                   if auto_id is not None and user_key in config}
+    skip_sensor = {auto_id for user_key, auto_id in SENSOR_OVERRIDES.items() if user_key in config}
+    skip_text = {auto_id for user_key, auto_id in TEXT_SENSOR_OVERRIDES.items() if user_key in config}
+    skip_switch = {auto_id for user_key, auto_id in SWITCH_OVERRIDES.items() if user_key in config}
+    skip_number = {auto_id for user_key, auto_id in NUMBER_OVERRIDES.items() if user_key in config}
+    skip_lock = {auto_id for user_key, auto_id in LOCK_OVERRIDES.items() if user_key in config}
+    skip_cover = {auto_id for user_key, auto_id in COVER_OVERRIDES.items() if user_key in config}
 
-    for bkey in ["locked", "user_present", "charge_flap_open", "asleep", "charging"]:
-        if bkey in config:
-            user_binary_keys.add(bkey)
-
-    for tkey in ["shift_state", "charging_state", "iec61851_state"]:
-        if tkey in config:
-            user_text_keys.add(tkey)
-
-    skip_binary_ids = set()
-    if "user_present" in user_binary_keys:
-        skip_binary_ids.add("user_present")
-    if "asleep" in user_binary_keys:
-        skip_binary_ids.add("asleep")
-    if "charging" in user_binary_keys:
-        skip_binary_ids.add("charger")
-    if "parking_brake" in config:
-        skip_binary_ids.add("parking_brake")
-    if "door_driver_front" in config:
-        skip_binary_ids.add("door_driver_front")
-    if "door_driver_rear" in config:
-        skip_binary_ids.add("door_driver_rear")
-    if "door_passenger_front" in config:
-        skip_binary_ids.add("door_passenger_front")
-    if "door_passenger_rear" in config:
-        skip_binary_ids.add("door_passenger_rear")
-    if "window_driver_front" in config:
-        skip_binary_ids.add("window_driver_front")
-    if "window_driver_rear" in config:
-        skip_binary_ids.add("window_driver_rear")
-    if "window_passenger_front" in config:
-        skip_binary_ids.add("window_passenger_front")
-    if "window_passenger_rear" in config:
-        skip_binary_ids.add("window_passenger_rear")
-    skip_sensor_ids = set()
-    id_map = {
-        "battery_level": "battery_level",
-        "range": "range",
-        "range_rated_api": "range_rated_api",
-        "inside_temp": "inside_temp",
-        "outside_temp": "outside_temp",
-        "driver_temp_setting": "driver_temp_setting",
-        "passenger_temp_setting": "passenger_temp_setting",
-        "odometer": "odometer",
-        "speed": "speed",
-        "charge_energy_added": "charge_energy_added",
-        "charge_rate": "charge_rate",
-        "charger_power": "charger_power",
-        "charger_voltage": "charger_voltage",
-        "charger_current": "charger_current",
-        "charging_rate": "charging_rate",
-        "time_to_full_charge": "time_to_full_charge",
-        "tpms_front_left": "tpms_front_left",
-        "tpms_front_right": "tpms_front_right",
-        "tpms_rear_left": "tpms_rear_left",
-        "tpms_rear_right": "tpms_rear_right",
-    }
-    for config_key, sensor_id in id_map.items():
-        if config_key in user_sensor_keys:
-            skip_sensor_ids.add(sensor_id)
-
-    skip_text_ids = set()
-    if "shift_state" in user_text_keys:
-        skip_text_ids.add("shift_state")
-    if "charging_state" in user_text_keys:
-        skip_text_ids.add("charging_state")
-    if "iec61851_state" in user_text_keys:
-        skip_text_ids.add("iec61851_state")
-
+    # Auto-create default entities (skipped if user has provided an override)
     for definition in BINARY_SENSORS:
-        if definition["id"] not in skip_binary_ids:
+        if definition["id"] not in skip_binary:
             await create_binary_sensor(var, definition)
     for definition in SENSORS:
-        if definition["id"] not in skip_sensor_ids:
+        if definition["id"] not in skip_sensor:
             await create_sensor(var, definition)
     for definition in TEXT_SENSORS:
-        if definition["id"] not in skip_text_ids:
+        if definition["id"] not in skip_text:
             await create_text_sensor(var, definition)
-            
-    if "battery_level" in config:
-        await create_sensor(var, {"id": "battery_level"}, user_config=config["battery_level"])
-    if "range" in config:
-        await create_sensor(var, {"id": "range"}, user_config=config["range"])
-    if "range_rated_api" in config:
-        await create_sensor(var, {"id": "range_rated_api"}, user_config=config["range_rated_api"])
-    if "inside_temp" in config:
-        await create_sensor(var, {"id": "inside_temp"}, user_config=config["inside_temp"])
-    if "outside_temp" in config:
-        await create_sensor(var, {"id": "outside_temp"}, user_config=config["outside_temp"])
-    if "driver_temp_setting" in config:
-        await create_sensor(var, {"id": "driver_temp_setting"}, user_config=config["driver_temp_setting"])
-    if "passenger_temp_setting" in config:
-        await create_sensor(var, {"id": "passenger_temp_setting"}, user_config=config["passenger_temp_setting"])
-    if "odometer" in config:
-        await create_sensor(var, {"id": "odometer"}, user_config=config["odometer"])
-    if "speed" in config:
-        await create_sensor(var, {"id": "speed"}, user_config=config["speed"])
-    if "charge_energy_added" in config:
-        await create_sensor(var, {"id": "charge_energy_added"}, user_config=config["charge_energy_added"])
-    if "charge_rate" in config:
-        await create_sensor(var, {"id": "charge_rate"}, user_config=config["charge_rate"])
-    if "charger_power" in config:
-        await create_sensor(var, {"id": "charger_power"}, user_config=config["charger_power"])
-    if "charger_voltage" in config:
-        await create_sensor(var, {"id": "charger_voltage"}, user_config=config["charger_voltage"])
-    if "charger_current" in config:
-        await create_sensor(var, {"id": "charger_current"}, user_config=config["charger_current"])
-    if "charging_rate" in config:
-        await create_sensor(var, {"id": "charging_rate"}, user_config=config["charging_rate"])
-    if "time_to_full_charge" in config:
-        await create_sensor(var, {"id": "time_to_full_charge"}, user_config=config["time_to_full_charge"])
-    if "tpms_front_left" in config:
-        await create_sensor(var, {"id": "tpms_front_left"}, user_config=config["tpms_front_left"])
-    if "tpms_front_right" in config:
-        await create_sensor(var, {"id": "tpms_front_right"}, user_config=config["tpms_front_right"])
-    if "tpms_rear_left" in config:
-        await create_sensor(var, {"id": "tpms_rear_left"}, user_config=config["tpms_rear_left"])
-    if "tpms_rear_right" in config:
-        await create_sensor(var, {"id": "tpms_rear_right"}, user_config=config["tpms_rear_right"])
-
-    if "locked" in config:
-        await create_binary_sensor(var, {"id": "locked"}, user_config=config["locked"])
-    if "user_present" in config:
-        await create_binary_sensor(var, {"id": "user_present"}, user_config=config["user_present"])
-    if "charge_flap_open" in config:
-        await create_binary_sensor(var, {"id": "charge_flap_open"}, user_config=config["charge_flap_open"])
-    if "asleep" in config:
-        await create_binary_sensor(var, {"id": "asleep"}, user_config=config["asleep"])
-    if "charging" in config:
-        await create_binary_sensor(var, {"id": "charging"}, user_config=config["charging"])
-    if "parking_brake" in config:
-        await create_binary_sensor(var, {"id": "parking_brake"}, user_config=config["parking_brake"])
-    if "door_driver_front" in config:
-        await create_binary_sensor(var, {"id": "door_driver_front"}, user_config=config["door_driver_front"])
-    if "door_driver_rear" in config:
-        await create_binary_sensor(var, {"id": "door_driver_rear"}, user_config=config["door_driver_rear"])
-    if "door_passenger_front" in config:
-        await create_binary_sensor(var, {"id": "door_passenger_front"}, user_config=config["door_passenger_front"])
-    if "door_passenger_rear" in config:
-        await create_binary_sensor(var, {"id": "door_passenger_rear"}, user_config=config["door_passenger_rear"])
-    if "window_driver_front" in config:
-        await create_binary_sensor(var, {"id": "window_driver_front"}, user_config=config["window_driver_front"])
-    if "window_driver_rear" in config:
-        await create_binary_sensor(var, {"id": "window_driver_rear"}, user_config=config["window_driver_rear"])
-    if "window_passenger_front" in config:
-        await create_binary_sensor(var, {"id": "window_passenger_front"}, user_config=config["window_passenger_front"])
-    if "window_passenger_rear" in config:
-        await create_binary_sensor(var, {"id": "window_passenger_rear"}, user_config=config["window_passenger_rear"])
-
-    if "shift_state" in config:
-        await create_text_sensor(var, {"id": "shift_state"}, user_config=config["shift_state"])
-    if "charging_state" in config:
-        await create_text_sensor(var, {"id": "charging_state"}, user_config=config["charging_state"])
-    if "iec61851_state" in config:
-        await create_text_sensor(var, {"id": "iec61851_state"}, user_config=config["iec61851_state"])
-
-    for definition in BUTTONS: await create_button(var, definition)
-    
-    skip_switch_ids = set()
-    if "charging_switch" in config: skip_switch_ids.add("charging")
-    if "steering_wheel_heat_switch" in config: skip_switch_ids.add("steering_wheel_heat")
+    for definition in BUTTONS:
+        await create_button(var, definition)
     for definition in SWITCHES:
-        if definition["id"] not in skip_switch_ids:
+        if definition["id"] not in skip_switch:
             await create_switch(var, definition)
-    
-    skip_number_ids = set()
-    if "charging_amps" in config: skip_number_ids.add("charging_amps")
     for definition in NUMBERS:
-        if definition["id"] not in skip_number_ids:
+        if definition["id"] not in skip_number:
             await create_number(var, definition, config)
-    
-    skip_lock_ids = set()
-    if "doors_lock" in config: skip_lock_ids.add("doors")
-    if "charge_port_latch_lock" in config: skip_lock_ids.add("charge_port_latch")
     for definition in LOCKS:
-        if definition["id"] not in skip_lock_ids:
+        if definition["id"] not in skip_lock:
             await create_lock(var, definition)
-    
-    skip_cover_ids = set()
-    if "frunk_cover" in config: skip_cover_ids.add("frunk")
-    if "trunk_cover" in config: skip_cover_ids.add("trunk")
-    if "windows_cover" in config: skip_cover_ids.add("windows")
-    if "charge_port_door_cover" in config: skip_cover_ids.add("charge_port_door")
     for definition in COVERS:
-        if definition["id"] not in skip_cover_ids:
+        if definition["id"] not in skip_cover:
             await create_cover(var, definition)
-    
     await create_climate_entity(var, CLIMATE)
 
-    # User-declared switches
+    # User-provided overrides for sensor/binary/text
+    for user_key, auto_id in SENSOR_OVERRIDES.items():
+        if user_key in config:
+            await create_sensor(var, {"id": auto_id}, user_config=config[user_key])
+    for user_key, auto_id in BINARY_SENSOR_OVERRIDES.items():
+        if user_key in config:
+            await create_binary_sensor(var, {"id": user_key}, user_config=config[user_key])
+    for user_key, auto_id in TEXT_SENSOR_OVERRIDES.items():
+        if user_key in config:
+            await create_text_sensor(var, {"id": user_key}, user_config=config[user_key])
+
+    # User-provided switches
     if "charging_switch" in config:
         sw = await switch.new_switch(config["charging_switch"])
         cg.add(sw.set_parent(var))
@@ -621,76 +544,86 @@ async def to_code(config):
         sw = await switch.new_switch(config["steering_wheel_heat_switch"])
         cg.add(sw.set_parent(var))
         cg.add(var.set_steering_wheel_heat_switch(sw))
-    
-    # User-declared numbers
+
+    # User-provided numbers
     if "charging_amps" in config:
-        num = await number.new_number(config["charging_amps"], min_value=0, max_value=charging_amps_max, step=1)
+        num = await number.new_number(
+            config["charging_amps"],
+            min_value=0,
+            max_value=config[CONF_CHARGING_AMPS_MAX],
+            step=1,
+        )
         cg.add(num.set_parent(var))
         cg.add(var.set_charging_amps_number(num))
-    
-    # User-declared locks
-    if "doors_lock" in config:
-        lck = cg.new_Pvariable(config["doors_lock"][CONF_ID])
-        await lock.register_lock(lck, config["doors_lock"])
-        cg.add(lck.set_parent(var))
-        cg.add(var.set_doors_lock(lck))
-    if "charge_port_latch_lock" in config:
-        lck = cg.new_Pvariable(config["charge_port_latch_lock"][CONF_ID])
-        await lock.register_lock(lck, config["charge_port_latch_lock"])
-        cg.add(lck.set_parent(var))
-        cg.add(var.set_charge_port_latch_lock(lck))
-    
-    # User-declared covers
-    if "frunk_cover" in config:
-        cvr = cg.new_Pvariable(config["frunk_cover"][CONF_ID])
-        await cover.register_cover(cvr, config["frunk_cover"])
-        cg.add(cvr.set_parent(var))
-        cg.add(var.set_frunk_cover(cvr))
-    if "trunk_cover" in config:
-        cvr = cg.new_Pvariable(config["trunk_cover"][CONF_ID])
-        await cover.register_cover(cvr, config["trunk_cover"])
-        cg.add(cvr.set_parent(var))
-        cg.add(var.set_trunk_cover(cvr))
-    if "windows_cover" in config:
-        cvr = cg.new_Pvariable(config["windows_cover"][CONF_ID])
-        await cover.register_cover(cvr, config["windows_cover"])
-        cg.add(cvr.set_parent(var))
-        cg.add(var.set_windows_cover(cvr))
-    if "charge_port_door_cover" in config:
-        cvr = cg.new_Pvariable(config["charge_port_door_cover"][CONF_ID])
-        await cover.register_cover(cvr, config["charge_port_door_cover"])
-        cg.add(cvr.set_parent(var))
-        cg.add(var.set_charge_port_door_cover(cvr))
 
-TESLA_WAKE_ACTION_SCHEMA = cv.Schema({cv.Required(CONF_ID): cv.use_id(TeslaBLEVehicle)})
-TESLA_PAIR_ACTION_SCHEMA = cv.Schema({cv.Required(CONF_ID): cv.use_id(TeslaBLEVehicle)})
-TESLA_REGENERATE_KEY_ACTION_SCHEMA = cv.Schema({cv.Required(CONF_ID): cv.use_id(TeslaBLEVehicle)})
-TESLA_FORCE_UPDATE_ACTION_SCHEMA = cv.Schema({cv.Required(CONF_ID): cv.use_id(TeslaBLEVehicle)})
-TESLA_SET_CHARGING_ACTION_SCHEMA = cv.Schema({cv.Required(CONF_ID): cv.use_id(TeslaBLEVehicle), cv.Required("state"): cv.templatable(cv.boolean)})
-TESLA_SET_CHARGING_AMPS_ACTION_SCHEMA = cv.Schema({cv.Required(CONF_ID): cv.use_id(TeslaBLEVehicle), cv.Required("amps"): cv.templatable(cv.int_range(min=0, max=80))})
-TESLA_SET_CHARGING_LIMIT_ACTION_SCHEMA = cv.Schema({cv.Required(CONF_ID): cv.use_id(TeslaBLEVehicle), cv.Required("limit"): cv.templatable(cv.int_range(min=50, max=100))})
+    # User-provided locks
+    for user_key, setter in (("doors_lock", "set_doors_lock"), ("charge_port_latch_lock", "set_charge_port_latch_lock")):
+        if user_key in config:
+            lck = cg.new_Pvariable(config[user_key][CONF_ID])
+            await lock.register_lock(lck, config[user_key])
+            cg.add(lck.set_parent(var))
+            cg.add(getattr(var, setter)(lck))
 
-@automation.register_action("tesla_ble_vehicle.wake", WakeAction, TESLA_WAKE_ACTION_SCHEMA)
+    # User-provided covers
+    cover_setter_map = {
+        "frunk_cover": "set_frunk_cover",
+        "trunk_cover": "set_trunk_cover",
+        "windows_cover": "set_windows_cover",
+        "charge_port_door_cover": "set_charge_port_door_cover",
+    }
+    for user_key, setter in cover_setter_map.items():
+        if user_key in config:
+            cvr = cg.new_Pvariable(config[user_key][CONF_ID])
+            await cover.register_cover(cvr, config[user_key])
+            cg.add(cvr.set_parent(var))
+            cg.add(getattr(var, setter)(cvr))
+
+# Base schema for all Tesla vehicle actions: requires a TeslaBLEVehicle reference
+TESLA_VEHICLE_BASE_ACTION_SCHEMA = cv.Schema({cv.Required(CONF_ID): cv.use_id(TeslaBLEVehicle)})
+# Concrete schemas - most are identical to base; parametrized schemas are defined separately
+TESLA_WAKE_ACTION_SCHEMA = TESLA_VEHICLE_BASE_ACTION_SCHEMA
+TESLA_PAIR_ACTION_SCHEMA = TESLA_VEHICLE_BASE_ACTION_SCHEMA
+TESLA_REGENERATE_KEY_ACTION_SCHEMA = TESLA_VEHICLE_BASE_ACTION_SCHEMA
+TESLA_FORCE_UPDATE_ACTION_SCHEMA = TESLA_VEHICLE_BASE_ACTION_SCHEMA
+TESLA_START_DRIVING_ACTION_SCHEMA = TESLA_VEHICLE_BASE_ACTION_SCHEMA
+TESLA_SET_CHARGING_ACTION_SCHEMA = cv.Schema({
+    cv.Required(CONF_ID): cv.use_id(TeslaBLEVehicle),
+    cv.Required("state"): cv.templatable(cv.boolean),
+})
+TESLA_SET_CHARGING_AMPS_ACTION_SCHEMA = cv.Schema({
+    cv.Required(CONF_ID): cv.use_id(TeslaBLEVehicle),
+    cv.Required("amps"): cv.templatable(cv.int_range(min=MIN_CHARGING_AMPS, max=MAX_CHARGING_AMPS)),
+})
+TESLA_SET_CHARGING_LIMIT_ACTION_SCHEMA = cv.Schema({
+    cv.Required(CONF_ID): cv.use_id(TeslaBLEVehicle),
+    cv.Required("limit"): cv.templatable(cv.int_range(min=MIN_CHARGING_LIMIT, max=MAX_CHARGING_LIMIT)),
+})
+
+
+# Helper: builds a simple action Pvariable that only forwards a TeslaBLEVehicle reference.
+# Use for actions that don't need any extra parameters (e.g. wake, pair, regenerate_key).
+async def _simple_vehicle_action(config, action_id, template_arg, args):
+    paren = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, paren)
+
+
+@automation.register_action("tesla_ble_vehicle.wake", WakeAction, TESLA_WAKE_ACTION_SCHEMA, synchronous=False)
 async def tesla_wake_to_code(config, action_id, template_arg, args):
-    paren = await cg.get_variable(config[CONF_ID])
-    return cg.new_Pvariable(action_id, template_arg, paren)
+    return await _simple_vehicle_action(config, action_id, template_arg, args)
 
-@automation.register_action("tesla_ble_vehicle.pair", PairAction, TESLA_PAIR_ACTION_SCHEMA)
+@automation.register_action("tesla_ble_vehicle.pair", PairAction, TESLA_PAIR_ACTION_SCHEMA, synchronous=False)
 async def tesla_pair_to_code(config, action_id, template_arg, args):
-    paren = await cg.get_variable(config[CONF_ID])
-    return cg.new_Pvariable(action_id, template_arg, paren)
+    return await _simple_vehicle_action(config, action_id, template_arg, args)
 
-@automation.register_action("tesla_ble_vehicle.regenerate_key", RegenerateKeyAction, TESLA_REGENERATE_KEY_ACTION_SCHEMA)
+@automation.register_action("tesla_ble_vehicle.regenerate_key", RegenerateKeyAction, TESLA_REGENERATE_KEY_ACTION_SCHEMA, synchronous=False)
 async def tesla_regenerate_key_to_code(config, action_id, template_arg, args):
-    paren = await cg.get_variable(config[CONF_ID])
-    return cg.new_Pvariable(action_id, template_arg, paren)
+    return await _simple_vehicle_action(config, action_id, template_arg, args)
 
-@automation.register_action("tesla_ble_vehicle.force_update", ForceUpdateAction, TESLA_FORCE_UPDATE_ACTION_SCHEMA)
+@automation.register_action("tesla_ble_vehicle.force_update", ForceUpdateAction, TESLA_FORCE_UPDATE_ACTION_SCHEMA, synchronous=False)
 async def tesla_force_update_to_code(config, action_id, template_arg, args):
-    paren = await cg.get_variable(config[CONF_ID])
-    return cg.new_Pvariable(action_id, template_arg, paren)
+    return await _simple_vehicle_action(config, action_id, template_arg, args)
 
-@automation.register_action("tesla_ble_vehicle.set_charging", SetChargingAction, TESLA_SET_CHARGING_ACTION_SCHEMA)
+@automation.register_action("tesla_ble_vehicle.set_charging", SetChargingAction, TESLA_SET_CHARGING_ACTION_SCHEMA, synchronous=False)
 async def tesla_set_charging_to_code(config, action_id, template_arg, args):
     paren = await cg.get_variable(config[CONF_ID])
     var = cg.new_Pvariable(action_id, template_arg, paren)
@@ -698,7 +631,7 @@ async def tesla_set_charging_to_code(config, action_id, template_arg, args):
     cg.add(var.set_state(template_))
     return var
 
-@automation.register_action("tesla_ble_vehicle.set_charging_amps", SetChargingAmpsAction, TESLA_SET_CHARGING_AMPS_ACTION_SCHEMA)
+@automation.register_action("tesla_ble_vehicle.set_charging_amps", SetChargingAmpsAction, TESLA_SET_CHARGING_AMPS_ACTION_SCHEMA, synchronous=False)
 async def tesla_set_charging_amps_to_code(config, action_id, template_arg, args):
     paren = await cg.get_variable(config[CONF_ID])
     var = cg.new_Pvariable(action_id, template_arg, paren)
@@ -706,7 +639,7 @@ async def tesla_set_charging_amps_to_code(config, action_id, template_arg, args)
     cg.add(var.set_amps(template_))
     return var
 
-@automation.register_action("tesla_ble_vehicle.set_charging_limit", SetChargingLimitAction, TESLA_SET_CHARGING_LIMIT_ACTION_SCHEMA)
+@automation.register_action("tesla_ble_vehicle.set_charging_limit", SetChargingLimitAction, TESLA_SET_CHARGING_LIMIT_ACTION_SCHEMA, synchronous=False)
 async def tesla_set_charging_limit_to_code(config, action_id, template_arg, args):
     paren = await cg.get_variable(config[CONF_ID])
     var = cg.new_Pvariable(action_id, template_arg, paren)
@@ -714,15 +647,11 @@ async def tesla_set_charging_limit_to_code(config, action_id, template_arg, args
     cg.add(var.set_limit(template_))
     return var
 
-TESLA_START_DRIVING_ACTION_SCHEMA = cv.Schema({
-    cv.Required(CONF_ID): cv.use_id(TeslaBLEVehicle),
-})
-
 @automation.register_action(
     "tesla_ble_vehicle.start_driving",
     StartDrivingAction,
     TESLA_START_DRIVING_ACTION_SCHEMA,
+    synchronous=False,
 )
 async def tesla_start_driving_to_code(config, action_id, template_arg, args):
-    paren = await cg.get_variable(config[CONF_ID])   
-    return cg.new_Pvariable(action_id, template_arg, paren)
+    return await _simple_vehicle_action(config, action_id, template_arg, args)
