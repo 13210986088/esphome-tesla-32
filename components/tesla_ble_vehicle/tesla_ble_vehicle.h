@@ -83,7 +83,7 @@ public:
     int start_pairing();
     int regenerate_key();
     void force_update();
-    void start_driving();
+    int start_driving();
 
     int set_charging_state(bool charging);
     int set_charging_amps(int amps);
@@ -139,7 +139,8 @@ private:
     uint32_t infotainment_poll_interval_awake_{30000};
     uint32_t infotainment_poll_interval_active_{10000};
     uint32_t infotainment_sleep_timeout_{660000};
-    
+    int charging_amps_max_{32};  // Local cache - applied to state_manager_ when ready
+
     uint32_t last_vcsec_poll_{0};
     uint32_t last_infotainment_poll_{0};
 
@@ -180,7 +181,13 @@ protected:
 #define DEFINE_TESLA_BUTTON(ClassName, ParentMethod) \
     class ClassName : public TeslaButtonBase { \
     protected: \
-        void press_action() override { if (parent_) parent_->ParentMethod(); } \
+        void press_action() override { \
+            if (parent_) { \
+                parent_->ParentMethod(); \
+            } else { \
+                ESP_LOGW(TAG, #ClassName " pressed before parent was set"); \
+            } \
+        } \
     };
 
 DEFINE_TESLA_BUTTON(TeslaWakeButton, wake_vehicle)
@@ -203,7 +210,12 @@ protected:
     class ClassName : public TeslaSwitchBase { \
     protected: \
         void write_state(bool state) override { \
-            if (parent_) { parent_->ParentMethod(state); publish_state(state); } \
+            if (parent_) { \
+                parent_->ParentMethod(state); \
+                publish_state(state); \
+            } else { \
+                ESP_LOGW(TAG, #ClassName " write_state before parent was set"); \
+            } \
         } \
     };
 
@@ -263,33 +275,81 @@ protected:
 
 // Automation Actions
 template<typename... Ts> class WakeAction : public Action<Ts...> {
-public: WakeAction(TeslaBLEVehicle *parent) : parent_(parent) {} void play(Ts... x) override { parent_->wake_vehicle(); } protected: TeslaBLEVehicle *parent_;
+ public:
+  WakeAction(TeslaBLEVehicle *parent) : parent_(parent) {}
+  void play(Ts... x) override { parent_->wake_vehicle(); }
+
+ protected:
+  TeslaBLEVehicle *parent_;
 };
+
 template<typename... Ts> class PairAction : public Action<Ts...> {
-public: PairAction(TeslaBLEVehicle *parent) : parent_(parent) {} void play(Ts... x) override { parent_->start_pairing(); } protected: TeslaBLEVehicle *parent_;
+ public:
+  PairAction(TeslaBLEVehicle *parent) : parent_(parent) {}
+  void play(Ts... x) override { parent_->start_pairing(); }
+
+ protected:
+  TeslaBLEVehicle *parent_;
 };
+
 template<typename... Ts> class RegenerateKeyAction : public Action<Ts...> {
-public: RegenerateKeyAction(TeslaBLEVehicle *parent) : parent_(parent) {} void play(Ts... x) override { parent_->regenerate_key(); } protected: TeslaBLEVehicle *parent_;
+ public:
+  RegenerateKeyAction(TeslaBLEVehicle *parent) : parent_(parent) {}
+  void play(Ts... x) override { parent_->regenerate_key(); }
+
+ protected:
+  TeslaBLEVehicle *parent_;
 };
+
 template<typename... Ts> class ForceUpdateAction : public Action<Ts...> {
-public: ForceUpdateAction(TeslaBLEVehicle *parent) : parent_(parent) {} void play(Ts... x) override { parent_->force_update(); } protected: TeslaBLEVehicle *parent_;
+ public:
+  ForceUpdateAction(TeslaBLEVehicle *parent) : parent_(parent) {}
+  void play(Ts... x) override { parent_->force_update(); }
+
+ protected:
+  TeslaBLEVehicle *parent_;
 };
+
 template<typename... Ts> class SetChargingAction : public Action<Ts...> {
-public: SetChargingAction(TeslaBLEVehicle *parent) : parent_(parent) {} void set_state(esphome::TemplatableValue<bool, Ts...> state) { state_ = state; } void play(Ts... x) override { parent_->set_charging_state(state_.value(x...)); } protected: TeslaBLEVehicle *parent_; esphome::TemplatableValue<bool, Ts...> state_;
+ public:
+  SetChargingAction(TeslaBLEVehicle *parent) : parent_(parent) {}
+  void set_state(esphome::TemplatableValue<bool, Ts...> state) { state_ = state; }
+  void play(Ts... x) override { parent_->set_charging_state(state_.value(x...)); }
+
+ protected:
+  TeslaBLEVehicle *parent_;
+  esphome::TemplatableValue<bool, Ts...> state_;
 };
+
 template<typename... Ts> class SetChargingAmpsAction : public Action<Ts...> {
-public: SetChargingAmpsAction(TeslaBLEVehicle *parent) : parent_(parent) {} void set_amps(esphome::TemplatableValue<int, Ts...> amps) { amps_ = amps; } void play(Ts... x) override { parent_->set_charging_amps(amps_.value(x...)); } protected: TeslaBLEVehicle *parent_; esphome::TemplatableValue<int, Ts...> amps_;
+ public:
+  SetChargingAmpsAction(TeslaBLEVehicle *parent) : parent_(parent) {}
+  void set_amps(esphome::TemplatableValue<int, Ts...> amps) { amps_ = amps; }
+  void play(Ts... x) override { parent_->set_charging_amps(amps_.value(x...)); }
+
+ protected:
+  TeslaBLEVehicle *parent_;
+  esphome::TemplatableValue<int, Ts...> amps_;
 };
+
 template<typename... Ts> class SetChargingLimitAction : public Action<Ts...> {
-public: SetChargingLimitAction(TeslaBLEVehicle *parent) : parent_(parent) {} void set_limit(esphome::TemplatableValue<int, Ts...> limit) { limit_ = limit; } void play(Ts... x) override { parent_->set_charging_limit(limit_.value(x...)); } protected: TeslaBLEVehicle *parent_; esphome::TemplatableValue<int, Ts...> limit_;
+ public:
+  SetChargingLimitAction(TeslaBLEVehicle *parent) : parent_(parent) {}
+  void set_limit(esphome::TemplatableValue<int, Ts...> limit) { limit_ = limit; }
+  void play(Ts... x) override { parent_->set_charging_limit(limit_.value(x...)); }
+
+ protected:
+  TeslaBLEVehicle *parent_;
+  esphome::TemplatableValue<int, Ts...> limit_;
 };
 
 template<typename... Ts> class StartDrivingAction : public Action<Ts...> {
-public:
-    explicit StartDrivingAction(TeslaBLEVehicle *parent) : parent_(parent) {}
-    void play(Ts... x) override { parent_->start_driving(); }
-protected:
-    TeslaBLEVehicle *parent_;
+ public:
+  explicit StartDrivingAction(TeslaBLEVehicle *parent) : parent_(parent) {}
+  void play(Ts... x) override { parent_->start_driving(); }
+
+ protected:
+  TeslaBLEVehicle *parent_;
 };
 
 } // namespace tesla_ble_vehicle
